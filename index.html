@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Weekly Optimized Shift Planner</title>
+<style>
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:#e1f0ff; padding:20px;}
+.container { max-width:1200px; margin:auto; background:white; padding:25px; border-radius:15px; box-shadow:0 8px 20px rgba(0,0,0,0.2);}
+h2 { text-align:center; color:#1a5276; margin-bottom:20px; text-shadow:1px 1px #d6eaf8;}
+label { font-weight:bold; margin-top:10px; display:block; color:#154360;}
+input[type="text"], input[type="number"], select { width:100%; padding:10px; margin-top:5px; margin-bottom:10px; border-radius:8px; border:1px solid #85C1E9; box-shadow: inset 0 1px 3px rgba(0,0,0,0.1); transition: 0.3s;}
+input[type="text"]:focus, input[type="number"]:focus, select:focus { border-color:#3498db; box-shadow: 0 0 5px rgba(52,152,219,0.5);}
+.day-box { border:1px solid #85C1E9; padding:12px; margin-top:10px; border-radius:10px; background:#d6eaf8;}
+button { margin-top:15px; padding:12px; width:100%; background:#3498db; color:white; border:none; border-radius:10px; cursor:pointer; font-size:16px; transition:0.3s;}
+button:hover { background:#1f618d; box-shadow: 0 4px 10px rgba(0,0,0,0.2);}
+table { width:100%; margin-top:25px; border-collapse:collapse; font-size:14px; text-align:center; border-radius:10px; overflow:hidden;}
+th, td { border:1px solid #2980b9; padding:8px;}
+th { background: linear-gradient(45deg,#85C1E9,#3498db); color:white; font-weight:bold; text-shadow:1px 1px #1a5276;}
+.shift-work { background:#5dade2; color:white; font-weight:bold; border-radius:5px; padding:3px 6px; display:inline-block; margin:2px;}
+.shift-off { background:#58d68d; color:white; font-weight:bold; border-radius:5px; padding:3px 6px; display:inline-block; margin:2px;}
+.summary { background:#f1c40f; color:white; font-weight:bold; border-radius:5px; padding:3px 6px; display:inline-block; margin:2px;}
+.remove-btn { background:#e74c3c; color:white; border:none; padding:4px 8px; border-radius:5px; cursor:pointer; transition:0.3s;}
+.remove-btn:hover { background:#c0392b; }
+.suggestion { background:#f39c12; color:white; font-weight:bold; border-radius:5px; padding:5px 10px; display:block; margin:5px 0;}
+</style>
+</head>
+<body>
+
+<div class="container">
+<h2>Weekly Optimized Staff Shift Planner</h2>
+
+<label>Number of staff required per shift:</label>
+<input type="number" id="staffPerShift" placeholder="Default 4" min="1">
+
+<label>Import Staff Availability (Excel / CSV):</label>
+<input type="file" id="importFile" accept=".xlsx,.xls,.csv">
+
+<form id="staffForm">
+    <label>Staff Name</label>
+    <input type="text" id="name" required>
+
+    <div id="days"></div>
+
+    <button type="button" id="addStaffBtn">Add Staff</button>
+</form>
+
+<h3>Staff Preview (Before Generating Roster)</h3>
+<table id="staffPreview">
+    <tr>
+        <th>Name</th>
+        <th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th>
+        <th>Action</th>
+    </tr>
+</table>
+
+<button onclick="generateRoster()">Generate Weekly Optimized Roster</button>
+<div id="result"></div>
+<div id="shortageSuggestions"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script>
+let staffList = [];
+const days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const shifts = ["Day","Evening","Night"];
+const daysContainer = document.getElementById("days");
+const staffPreviewTable = document.getElementById("staffPreview");
+const suggestionDiv = document.getElementById("shortageSuggestions");
+
+// Create availability select for each day
+days.forEach(day => {
+    daysContainer.innerHTML += `
+    <div class="day-box">
+        <label>${day} Available?</label>
+        <select>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+        </select>
+    </div>`;
+});
+
+// Enter key navigation
+document.getElementById("staffForm").addEventListener("keydown", function(e){
+    if(e.key === "Enter"){
+        const formElements = Array.from(this.querySelectorAll("input, select, button"));
+        const index = formElements.indexOf(e.target);
+        if(index > -1 && index < formElements.length - 1){
+            formElements[index+1].focus();
+            e.preventDefault();
+        }
+    }
+});
+
+// Update staff preview table
+function updateStaffPreview(){
+    staffPreviewTable.innerHTML = `<tr>
+        <th>Name</th>${days.map(d=>`<th>${d}</th>`).join('')}<th>Action</th>
+    </tr>`;
+    staffList.forEach((staff, idx)=>{
+        const row = document.createElement("tr");
+        row.innerHTML = `<td>${staff.name}</td>` + 
+            staff.schedule.map(d=>`<td>${d.available}</td>`).join('') + 
+            `<td><button class="remove-btn" onclick="removeStaff(${idx})">Remove</button></td>`;
+        staffPreviewTable.appendChild(row);
+    });
+}
+
+// Remove staff from list
+function removeStaff(index){
+    if(confirm(`Are you sure you want to remove ${staffList[index].name}?`)){
+        staffList.splice(index,1);
+        updateStaffPreview();
+    }
+}
+
+// Add staff manually
+document.getElementById("addStaffBtn").addEventListener("click", function(){
+    const nameInput = document.getElementById("name");
+    const name = nameInput.value.trim();
+    if(!name){ alert("Please enter staff name"); return; }
+
+    const schedule = [];
+    document.querySelectorAll(".day-box").forEach(box => {
+        const dayName = box.querySelector("label").innerText.split(" ")[0];
+        const available = box.querySelector("select").value;
+        schedule.push({day: dayName, available});
+    });
+
+    staffList.push({name, schedule, lastShiftIndex:-1});
+    nameInput.value = "";
+    document.querySelector("#staffForm select").focus();
+    updateStaffPreview();
+});
+
+// Import Excel/CSV
+document.getElementById("importFile").addEventListener("change", function(e){
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = function(evt){
+        const data = new Uint8Array(evt.target.result);
+        const workbook = XLSX.read(data, {type:'array'});
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, {header:1});
+        for(let i=1;i<rows.length;i++){
+            const row = rows[i];
+            if(row.length < 8) continue;
+            const name = row[0];
+            const schedule = [];
+            for(let j=0;j<7;j++){
+                let val = String(row[j+1]).toLowerCase();
+                if(val !== "yes" && val !== "no") val = "no";
+                schedule.push({day: days[j], available: val});
+            }
+            staffList.push({name, schedule, lastShiftIndex:-1});
+        }
+        updateStaffPreview();
+        alert("Staff import complete! You can now remove/add staff or generate roster.");
+    };
+    reader.readAsArrayBuffer(file);
+});
+
+// Generate roster with staff limit per shift
+function generateRoster(){
+    if(staffList.length===0){ alert("No staff added"); return;}
+    const MAX_PER_SHIFT = parseInt(document.getElementById("staffPerShift").value) || 4;
+    const roster = {};
+    suggestionDiv.innerHTML = "";
+
+    days.forEach(day => roster[day] = {Day:[], Evening:[], Night:[]});
+
+    let shortageSuggestions = [];
+
+    days.forEach(day => {
+        const availableStaff = staffList.filter(s => s.schedule.find(d => d.day===day).available==="yes");
+        availableStaff.sort((a,b)=>a.lastShiftIndex - b.lastShiftIndex);
+
+        const shiftCounters = {Day:0, Evening:0, Night:0};
+
+        shifts.forEach(shift=>{
+            const staffForShift = availableStaff.filter(s => s.lastShiftIndex!==shifts.indexOf(shift));
+            const assignedStaff = staffForShift.slice(0, MAX_PER_SHIFT);
+            assignedStaff.forEach(staff=>{
+                roster[day][shift].push(staff.name);
+                staff.lastShiftIndex = shifts.indexOf(shift);
+            });
+            // Handle shortage
+            if(assignedStaff.length < MAX_PER_SHIFT){
+                shortageSuggestions.push(`${day} ${shift} needs ${MAX_PER_SHIFT - assignedStaff.length} more staff. Consider part-time, overtime, or swap shifts.`);
+            }
+        });
+    });
+
+    // Display table
+    let table = `<table><tr><th>Shift / Day</th>${days.map(d=>`<th>${d}</th>`).join('')}</tr>`;
+    shifts.forEach(shift=>{
+        table += `<tr><td>${shift}</td>`;
+        days.forEach(day=>{
+            let cellContent = '';
+            staffList.forEach(staff=>{
+                if(roster[day][shift].includes(staff.name)){
+                    cellContent += `<span class="shift-work">${staff.name}</span> `;
+                } else {
+                    const dayStatus = staff.schedule.find(d => d.day===day);
+                    if(dayStatus.available==="no"){
+                        cellContent += `<span class="shift-off">${staff.name}</span> `;
+                    }
+                }
+            });
+            table += `<td>${cellContent || '<span class="shift-off">OFF</span>'}</td>`;
+        });
+        table += `</tr>`;
+    });
+
+    // Summary row
+    table += `<tr><td><b>Present / Absent</b></td>`;
+    days.forEach(day=>{
+        let present = staffList.filter(s => {
+            const dayStatus = s.schedule.find(d => d.day===day);
+            return dayStatus.available==="yes" && 
+                   (roster[day].Day.includes(s.name) || roster[day].Evening.includes(s.name) || roster[day].Night.includes(s.name));
+        }).length;
+        let absent = staffList.length - present;
+        table += `<td><span class="summary">Present: ${present}</span><br><span class="summary">Absent: ${absent}</span></td>`;
+    });
+    table += `</tr></table>`;
+
+    document.getElementById("result").innerHTML = table;
+
+    // Display shortage suggestions
+    shortageSuggestions.forEach(s => {
+        const p = document.createElement("div");
+        p.className = "suggestion";
+        p.innerText = s;
+        suggestionDiv.appendChild(p);
+    });
+}
+</script>
+</body>
+</html>
